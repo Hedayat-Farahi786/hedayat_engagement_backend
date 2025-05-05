@@ -3,7 +3,6 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const path = require("path");
-const fs = require("fs");
 const { createCanvas, loadImage, registerFont } = require('canvas');
 const admin = require('firebase-admin');
 
@@ -14,26 +13,24 @@ const PORT = process.env.PORT || 3002;
 
 // Middleware
 app.use(express.json());
+app.use(cors()); // Enable CORS for all routes
 
-app.use(cors())
+// Connect to MongoDB with retry logic
+const connectWithRetry = () => {
+  mongoose
+    .connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    })
+    .then(() => console.log("Connected to MongoDB"))
+    .catch((err) => {
+      console.error("Error connecting to MongoDB:", err);
+      setTimeout(connectWithRetry, 5000); // Retry after 5 seconds
+    });
+};
+connectWithRetry();
 
-// const allowedOrigins = ["https://navidbelly.vercel.app", "*"];
-// app.use(cors({
-//   origin: function(origin, callback) {
-//     if (!origin || allowedOrigins.includes(origin)) {
-//       callback(null, true);
-//     } else {
-//       callback(new Error("Not allowed by CORS"));
-//     }
-//   }
-// }));
-
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log("Connected to MongoDB"))
-  .catch((err) => console.error("Error connecting to MongoDB:", err));
-
-// Define a sample MongoDB model
+// Define MongoDB model
 const SampleModel = mongoose.model(
   "Card",
   new mongoose.Schema({
@@ -43,7 +40,7 @@ const SampleModel = mongoose.model(
   })
 );
 
-
+// Initialize Firebase Admin
 const serviceAccount = {
   type: process.env.GOOGLE_TYPE,
   project_id: process.env.GOOGLE_PROJECT_ID,
@@ -58,7 +55,6 @@ const serviceAccount = {
   universe_domain: process.env.GOOGLE_UNIVERSE_DOMAIN,
 };
 
-
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   storageBucket: 'gs://navid-963cf.appspot.com'
@@ -66,131 +62,145 @@ admin.initializeApp({
 
 const storage = admin.storage().bucket();
 
+// Register fonts
 registerFont(path.join(__dirname, "/NotoSansArabic-Bold.ttf"), { family: 'ArabicFont' });
 registerFont(path.join(__dirname, "/GlacialIndifference-Bold.otf"), { family: 'EnglishFont' });
 
-// Example route
+// Root route
 app.get("/", async (req, res) => {
   res.send("Hello! 2 :)");
 });
 
-
 // Route to fetch guests list
 app.get("/guests_list", async (req, res) => {
-    try {
-      // Query the database to retrieve all records
-      const allSamples = await SampleModel.find();
-  
-      // Send the array of records as the response
-      res.json(allSamples);
-    } catch (error) {
-      console.error("Error fetching samples:", error);
-      res.status(500).send({ status: "nok", message: error.message });
-    }
-  });
+  try {
+    const allSamples = await SampleModel.find().lean(); // Use lean for better performance
+    res.json(allSamples);
+  } catch (error) {
+    console.error("Error fetching guests:", error);
+    res.status(500).json({ status: "nok", message: "Failed to fetch guests list" });
+  }
+});
 
 // Route to fill image
 app.post("/fill-image", async (req, res) => {
-    try {
-        const { name, number, twoNames } = req.body;
+  try {
+    const { name, number, twoNames } = req.body;
 
-        // Load the template image
-        const template = await loadImage(path.join(__dirname, "/template.jpg"));
-
-        // Create a canvas
-        const canvas = createCanvas(template.width, template.height);
-        const ctx = canvas.getContext('2d');
-
-        // Draw the template image onto the canvas
-        ctx.drawImage(template, 0, 0, template.width, template.height);
-
-        let englishText = false; // Default to false
-        const languageRegex = /^[a-zA-Z\säöüÄÖÜßàáâãäåçèéêëìíîïðñòóôõöøùúûüýÿÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝ\s]+$/;
-        
-        // Check if the text is in English
-        if (languageRegex.test(name)) {
-          englishText = true;
-        }
-
-        // Set font properties for Arabic text
-        ctx.font = englishText ? '26px EnglishFont' : '26px ArabicFont'; // Use the custom font here
-        ctx.fillStyle = '#7d5438'; // Set your desired color here
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle'; // Ensure text is vertically centered
-
-        // Draw Arabic name on the image
-        ctx.fillText(name, ((canvas.width / 2) - 50), (canvas.height / 2) - (twoNames ? 180 : -35));
-
-        const editedImageBuffer = canvas.toBuffer();
-        
-
-        const fileName = `hedayat/${new Date().getTime()}_edited-image.jpg`;
-        const file = storage.file(fileName);
-
-        await file.save(editedImageBuffer, {
-          metadata: {
-            contentType: 'image/jpeg' // Adjust according to your image type
-          }
-        });
-
-        // Set expiration date to 1 year from now
-        const expiresAt = new Date();
-        expiresAt.setFullYear(expiresAt.getFullYear() + 1);
-        
-        // Generate a signed download URL for the image
-        const imageUrl = await file.getSignedUrl({
-            action: 'read',
-            expires: expiresAt.toISOString() // Using dynamic expiration date
-          });
-
-        // Create a new document in the database to store the image URL
-        const newSample = new SampleModel({
-            name: name,
-            number: number,
-            imagePath: imageUrl[0], // Use the Firebase Storage URL
-        });
-
-        const savedRecord = await newSample.save();
-
-        // Send success response with the image URL from Firebase Storage
-        res.json({ card: savedRecord });
-
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).send('Internal Server Error');
+    if (!name || !number) {
+      return res.status(400).json({ status: "nok", message: "Name and number are required" });
     }
+
+    // Load the template image
+    const template = await loadImage(path.join(__dirname, "/template.jpg"));
+
+    // Create a canvas
+    const canvas = createCanvas(template.width, template.height);
+    const ctx = canvas.getContext('2d');
+
+    // Draw the template image onto the canvas
+    ctx.drawImage(template, 0, 0, template.width, template.height);
+
+    let englishText = false;
+    const languageRegex = /^[a-zA-Z\säöüÄÖÜßàáâãäåçèéêëìíîïðñòóôõöøùúûüýÿÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝ\s]+$/;
+    if (languageRegex.test(name)) {
+      englishText = true;
+    }
+
+    // Set font properties
+    ctx.font = englishText ? '26px EnglishFont' : '26px ArabicFont';
+    ctx.fillStyle = '#7d5438';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Draw name on the image
+    ctx.fillText(name, ((canvas.width / 2) - 50), (canvas.height / 2) - (twoNames ? 180 : -35));
+
+    const editedImageBuffer = canvas.toBuffer();
+
+    const fileName = `hedayat/${new Date().getTime()}_edited-image.jpg`;
+    const file = storage.file(fileName);
+
+    await file.save(editedImageBuffer, {
+      metadata: {
+        contentType: 'image/jpeg'
+      }
+    });
+
+    // Set expiration date to 1 year from now
+    const expiresAt = new Date();
+    expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+
+    // Generate a signed download URL
+    const [imageUrl] = await file.getSignedUrl({
+      action: 'read',
+      expires: expiresAt.toISOString()
+    });
+
+    // Save to MongoDB
+    const newSample = new SampleModel({
+      name,
+      number,
+      imagePath: imageUrl,
+    });
+
+    const savedRecord = await newSample.save();
+
+    res.json({ card: savedRecord });
+  } catch (err) {
+    console.error("Error creating image:", err);
+    res.status(500).json({ status: "nok", message: "Failed to create image" });
+  }
 });
 
-
-// Route to delete a sample by ID
+// Route to delete a guest by ID
 app.delete("/guests_list/:id", async (req, res) => {
+  try {
     const sampleId = req.params.id;
-  
-    try {
-      // Find the record by ID and delete it
-      const deletedSample = await SampleModel.findByIdAndDelete(sampleId);
-  
-      // If the record is not found, return 404
-      if (!deletedSample) {
-        return res
-          .status(404)
-          .json({ status: "not found", message: "Record not found" });
-      }
-  
-      // Send a success response
-      res.json({
-        status: "success",
-        message: "Record deleted successfully",
-        deletedSample,
-      });
-    } catch (error) {
-      console.error("Error deleting sample:", error);
-      res.status(500).send({ status: "nok", message: error.message });
-    }
-  });
-  
+    const deletedSample = await SampleModel.findByIdAndDelete(sampleId);
 
+    if (!deletedSample) {
+      return res.status(404).json({ status: "not found", message: "Record not found" });
+    }
+
+    res.json({
+      status: "success",
+      message: "Record deleted successfully",
+      deletedSample,
+    });
+  } catch (error) {
+    console.error("Error deleting guest:", error);
+    res.status(500).json({ status: "nok", message: "Failed to delete guest" });
+  }
+});
+
+// Route to serve image by guest ID
+app.get("/get-image/:id", async (req, res) => {
+  try {
+    const guestId = req.params.id;
+    const guest = await SampleModel.findById(guestId);
+
+    if (!guest || !guest.imagePath) {
+      return res.status(404).json({ status: "not found", message: "Guest or image not found" });
+    }
+
+    // Fetch the image from Firebase Storage using the signed URL
+    const response = await axios.get(guest.imagePath, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
+
+    // Set response headers
+    res.set({
+      "Content-Type": "image/jpeg",
+      "Content-Disposition": `attachment; filename="${guest.name}.jpg"`,
+      "Access-Control-Allow-Origin": "*", // Ensure CORS is allowed
+    });
+
+    res.send(buffer);
+  } catch (error) {
+    console.error("Error fetching image:", error);
+    res.status(500).json({ status: "nok", message: "Failed to fetch image" });
+  }
+});
 
 // Start server
 app.listen(PORT, () => {
