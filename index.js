@@ -113,7 +113,7 @@ app.post("/fill-image", async (req, res) => {
         }
 
         // Set font properties for Arabic text
-        ctx.font = englishText ? '24px EnglishFont' : '24px ArabicFont'; // Use the custom font here
+        ctx.font = englishText ? '26px EnglishFont' : '26px ArabicFont'; // Use the custom font here
         ctx.fillStyle = '#7d5438'; // Set your desired color here
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle'; // Ensure text is vertically centered
