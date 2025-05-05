@@ -1,0 +1,59 @@
+# Ignore Node.js related files and directories
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Ignore build artifacts
+build/
+dist/
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# Ignore environment-specific files
+.env
+.env.local
+.env.*.local
+
+# Ignore database files (if applicable)
+*.sqlite
+*.db
+*.sql
+
+# Ignore OS-generated files
+.DS_Store
+Thumbs.db
+
+# Ignore editor/IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Ignore dependency files
+package-lock.json
+yarn.lock
+
+# Ignore logs and temporary files
+log/
+logs/
+temp/
+.tmp/
+*.log*
+*.tmp
+*.swp
+
+# Ignore API keys and sensitive information (replace with actual file names if needed)
+secrets.json
+config.js
+
+# Ignore generated documentation
+doc/
+
+# Ignore any other project-specific files or directories
+# Add more entries as needed for your project
+
+# Ignore hidden files (usually editor/IDE settings)
+.*.*
+
+.vercel
