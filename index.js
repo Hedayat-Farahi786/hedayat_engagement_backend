@@ -191,10 +191,15 @@ app.get("/get-image/:id", async (req, res) => {
 
     const buffer = Buffer.from(response.data);
 
+    // Encode filename for Content-Disposition header
+    const encodedFilename = encodeURIComponent(guest.name);
+    const asciiFilename = guest.name.replace(/[^\x20-\x7E]/g, '_'); // Fallback for older browsers
+    const contentDisposition = `attachment; filename="${asciiFilename}.jpg"; filename*=UTF-8''${encodedFilename}.jpg`;
+
     // Set response headers
     res.set({
       "Content-Type": "image/jpeg",
-      "Content-Disposition": `attachment; filename="${guest.name}.jpg"`,
+      "Content-Disposition": contentDisposition,
       "Access-Control-Allow-Origin": "*",
     });
 
