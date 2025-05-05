@@ -5,6 +5,7 @@ const dotenv = require("dotenv");
 const path = require("path");
 const { createCanvas, loadImage, registerFont } = require('canvas');
 const admin = require('firebase-admin');
+const axios = require('axios');
 
 dotenv.config();
 
@@ -13,7 +14,7 @@ const PORT = process.env.PORT || 3002;
 
 // Middleware
 app.use(express.json());
-app.use(cors()); // Enable CORS for all routes
+app.use(cors());
 
 // Connect to MongoDB with retry logic
 const connectWithRetry = () => {
@@ -25,7 +26,7 @@ const connectWithRetry = () => {
     .then(() => console.log("Connected to MongoDB"))
     .catch((err) => {
       console.error("Error connecting to MongoDB:", err);
-      setTimeout(connectWithRetry, 5000); // Retry after 5 seconds
+      setTimeout(connectWithRetry, 5000);
     });
 };
 connectWithRetry();
@@ -74,7 +75,7 @@ app.get("/", async (req, res) => {
 // Route to fetch guests list
 app.get("/guests_list", async (req, res) => {
   try {
-    const allSamples = await SampleModel.find().lean(); // Use lean for better performance
+    const allSamples = await SampleModel.find().lean();
     res.json(allSamples);
   } catch (error) {
     console.error("Error fetching guests:", error);
@@ -91,14 +92,9 @@ app.post("/fill-image", async (req, res) => {
       return res.status(400).json({ status: "nok", message: "Name and number are required" });
     }
 
-    // Load the template image
     const template = await loadImage(path.join(__dirname, "/template.jpg"));
-
-    // Create a canvas
     const canvas = createCanvas(template.width, template.height);
     const ctx = canvas.getContext('2d');
-
-    // Draw the template image onto the canvas
     ctx.drawImage(template, 0, 0, template.width, template.height);
 
     let englishText = false;
@@ -107,17 +103,13 @@ app.post("/fill-image", async (req, res) => {
       englishText = true;
     }
 
-    // Set font properties
     ctx.font = englishText ? '26px EnglishFont' : '26px ArabicFont';
     ctx.fillStyle = '#7d5438';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-
-    // Draw name on the image
     ctx.fillText(name, ((canvas.width / 2) - 50), (canvas.height / 2) - (twoNames ? 180 : -35));
 
     const editedImageBuffer = canvas.toBuffer();
-
     const fileName = `hedayat/${new Date().getTime()}_edited-image.jpg`;
     const file = storage.file(fileName);
 
@@ -127,17 +119,13 @@ app.post("/fill-image", async (req, res) => {
       }
     });
 
-    // Set expiration date to 1 year from now
     const expiresAt = new Date();
     expiresAt.setFullYear(expiresAt.getFullYear() + 1);
-
-    // Generate a signed download URL
     const [imageUrl] = await file.getSignedUrl({
       action: 'read',
       expires: expiresAt.toISOString()
     });
 
-    // Save to MongoDB
     const newSample = new SampleModel({
       name,
       number,
@@ -145,7 +133,6 @@ app.post("/fill-image", async (req, res) => {
     });
 
     const savedRecord = await newSample.save();
-
     res.json({ card: savedRecord });
   } catch (err) {
     console.error("Error creating image:", err);
@@ -178,27 +165,44 @@ app.delete("/guests_list/:id", async (req, res) => {
 app.get("/get-image/:id", async (req, res) => {
   try {
     const guestId = req.params.id;
-    const guest = await SampleModel.findById(guestId);
+    console.log(`Fetching image for guest ID: ${guestId}`);
 
+    // Validate guest ID
+    if (!mongoose.Types.ObjectId.isValid(guestId)) {
+      console.error(`Invalid guest ID: ${guestId}`);
+      return res.status(400).json({ status: "nok", message: "Invalid guest ID" });
+    }
+
+    // Fetch guest from MongoDB
+    const guest = await SampleModel.findById(guestId).lean();
     if (!guest || !guest.imagePath) {
+      console.error(`Guest not found or no image path for ID: ${guestId}`);
       return res.status(404).json({ status: "not found", message: "Guest or image not found" });
     }
 
-    // Fetch the image from Firebase Storage using the signed URL
+    console.log(`Image path: ${guest.imagePath}`);
+
+    // Fetch image from Firebase Storage
     const response = await axios.get(guest.imagePath, { responseType: 'arraybuffer' });
+    if (response.status !== 200) {
+      console.error(`Failed to fetch image from Firebase: ${response.status}`);
+      throw new Error(`Failed to fetch image: ${response.statusText}`);
+    }
+
     const buffer = Buffer.from(response.data);
 
     // Set response headers
     res.set({
       "Content-Type": "image/jpeg",
       "Content-Disposition": `attachment; filename="${guest.name}.jpg"`,
-      "Access-Control-Allow-Origin": "*", // Ensure CORS is allowed
+      "Access-Control-Allow-Origin": "*",
     });
 
+    console.log(`Successfully fetched image for ${guest.name}`);
     res.send(buffer);
   } catch (error) {
-    console.error("Error fetching image:", error);
-    res.status(500).json({ status: "nok", message: "Failed to fetch image" });
+    console.error(`Error in /get-image/${req.params.id}:`, error.message, error.stack);
+    res.status(500).json({ status: "nok", message: `Failed to fetch image: ${error.message}` });
   }
 });
 
